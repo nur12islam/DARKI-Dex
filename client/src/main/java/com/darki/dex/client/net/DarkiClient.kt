@@ -29,6 +29,7 @@ class DarkiClient {
     private val executor = Executors.newSingleThreadExecutor()
     @Volatile private var socket: Socket? = null
     @Volatile private var output: DataOutputStream? = null
+    private val writeLock = Any()
 
     fun connect(host: String, port: Int = DEFAULT_PORT, callback: Callback) {
         executor.execute {
@@ -42,10 +43,11 @@ class DarkiClient {
                 socket = client
                 runCatching {
                     val input = DataInputStream(client.getInputStream().buffered())
-                    output = DataOutputStream(client.getOutputStream().buffered())
+                    val out = DataOutputStream(client.getOutputStream().buffered())
+                    output = out
                     val hello = readPacket(input)
                     require(hello.type == TYPE_HELLO) { "Expected HELLO, received ${hello.type}" }
-                    sendPacket(TYPE_HELLO_ACK, "device=DARKI-Desktop\nrole=client".toByteArray())
+                    writePacket(out, TYPE_HELLO_ACK, "device=DARKI-Desktop\nrole=client".toByteArray())
                     callback.onConnected(client.inetAddress.hostAddress ?: host)
                     while (!client.isClosed) {
                         val packet = readPacket(input)
@@ -59,37 +61,42 @@ class DarkiClient {
         }
     }
 
-    fun sendMouse(action: Int, x: Float, y: Float, button: Int = 0, scrollX: Float = 0f, scrollY: Float = 0f) =
-        sendPacket(TYPE_MOUSE, ByteBuffer.allocate(24).apply {
-            putInt(action); putInt(button); putFloat(x); putFloat(y); putFloat(scrollX); putFloat(scrollY)
-        }.array())
+    fun sendMouse(action: Int, x: Float, y: Float, button: Int = 0, scrollX: Float = 0f, scrollY: Float = 0f) {
+        val payload = ByteBuffer.allocate(21).apply {
+            put(action.toByte())
+            putFloat(x)
+            putFloat(y)
+            putInt(button)
+            putFloat(scrollX)
+            putFloat(scrollY)
+        }.array()
+        send(TYPE_MOUSE, payload)
+    }
 
-    fun sendKey(action: Int, keyCode: Int, metaState: Int) =
-        sendPacket(TYPE_KEY, ByteBuffer.allocate(12).apply {
-            putInt(action); putInt(keyCode); putInt(metaState)
-        }.array())
+    fun sendKey(action: Int, keyCode: Int, metaState: Int = 0, unicodeChar: Int = 0) {
+        val payload = ByteBuffer.allocate(13).apply {
+            put(action.toByte())
+            putInt(keyCode)
+            putInt(metaState)
+            putInt(unicodeChar)
+        }.array()
+        send(TYPE_KEY, payload)
+    }
 
-    fun sendText(value: String) = sendPacket(TYPE_TEXT, value.toByteArray(Charsets.UTF_8))
+    fun sendText(text: String) {
+        send(TYPE_TEXT, text.toByteArray(Charsets.UTF_8))
+    }
 
-    private fun sendPacket(type: Int, payload: ByteArray) {
-        if (payload.size > MAX_CONTROL_PAYLOAD) return
-        runCatching {
-            synchronized(this) {
-                val out = output ?: return
-                out.writeInt(MAGIC)
-                out.writeShort(VERSION)
-                out.writeByte(type)
-                out.writeInt(payload.size)
-                out.write(payload)
-                out.flush()
-            }
-        }.onFailure { close() }
+    private fun send(type: Int, payload: ByteArray) {
+        synchronized(writeLock) {
+            output?.let { writePacket(it, type, payload) }
+        }
     }
 
     fun close() {
+        synchronized(writeLock) { output = null }
         socket?.runCatching { close() }
         socket = null
-        output = null
     }
 
     fun shutdown() {
@@ -113,6 +120,19 @@ class DarkiClient {
         val limit = if (type == TYPE_VIDEO_FRAME) MAX_VIDEO_PAYLOAD else MAX_CONTROL_PAYLOAD
         require(length in 0..limit) { "Invalid payload length: $length" }
         return Packet(type, ByteArray(length).also(input::readFully))
+    }
+
+    private fun writePacket(output: DataOutputStream, type: Int, payload: ByteArray) {
+        val limit = if (type == TYPE_VIDEO_FRAME) MAX_VIDEO_PAYLOAD else MAX_CONTROL_PAYLOAD
+        require(payload.size <= limit)
+        synchronized(writeLock) {
+            output.writeInt(MAGIC)
+            output.writeShort(VERSION)
+            output.writeByte(type)
+            output.writeInt(payload.size)
+            output.write(payload)
+            output.flush()
+        }
     }
 
     fun parseVideoConfig(payload: ByteArray): VideoConfig {
