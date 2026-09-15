@@ -6,6 +6,7 @@ object DarkiInput {
     const val TYPE_MOUSE = 20
     const val TYPE_KEY = 21
     const val TYPE_TEXT = 22
+    const val TYPE_NAVIGATION = 23
 
     const val MOUSE_MOVE = 0
     const val MOUSE_DOWN = 1
