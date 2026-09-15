@@ -32,10 +32,12 @@ class ScreenCaptureService : Service() {
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var encoder: H264Encoder? = null
+    private var frameCount = 0L
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             Log.i(TAG, "MediaProjection stopped by system/user")
+            updateNotification("Screen capture stopped by Android")
             releaseCapture(stopProjection = false)
             stopSelf()
         }
@@ -68,10 +70,11 @@ class ScreenCaptureService : Service() {
 
         val manager = getSystemService(MediaProjectionManager::class.java)
         try {
+            updateNotification("Permission accepted • creating MediaProjection…")
             projection = checkNotNull(manager.getMediaProjection(resultCode, resultData))
             projection?.registerCallback(projectionCallback, null)
             startCapture()
-            updateNotification("Screen capture is running")
+            updateNotification("Capture running • waiting for first video frame")
             Log.i(TAG, "DARKI-Dex screen capture started successfully")
         } catch (t: Throwable) {
             Log.e(TAG, "Unable to start capture", t)
@@ -87,6 +90,7 @@ class ScreenCaptureService : Service() {
         val mediaProjection = checkNotNull(projection)
         val server = DarkiHostServer.current
 
+        updateNotification("Creating H.264 encoder ${WIDTH}×${HEIGHT}@${FPS}…")
         val newEncoder = H264Encoder(
             width = WIDTH,
             height = HEIGHT,
@@ -96,19 +100,27 @@ class ScreenCaptureService : Service() {
                 val csd0 = format.getByteBuffer("csd-0")?.let { copyBuffer(it) }
                 val csd1 = format.getByteBuffer("csd-1")?.let { copyBuffer(it) }
                 Log.i(TAG, "Encoder output format: $format")
+                updateNotification("H.264 encoder ready • ${WIDTH}×${HEIGHT}")
                 if (server != null && csd0 != null) {
                     server.broadcastVideoConfig(WIDTH, HEIGHT, csd0, csd1)
                 }
             },
             onFrame = { buffer, info ->
                 if (info.size <= 0) return@H264Encoder
+                frameCount++
+                if (frameCount == 1L) updateNotification("Video frames flowing • DARKI-Dex is live")
                 val bytes = ByteArray(buffer.remaining())
                 buffer.get(bytes)
                 server?.broadcastVideoFrame(bytes, info.presentationTimeUs, info.flags)
+            },
+            onError = { error ->
+                Log.e(TAG, "H.264 encoder error", error)
+                showError("H.264 encoder error: ${message(error)}")
             }
         )
         newEncoder.start()
         encoder = newEncoder
+        updateNotification("H.264 encoder started • creating virtual display…")
 
         val metrics = DisplayMetrics().also {
             @Suppress("DEPRECATION")
@@ -126,6 +138,7 @@ class ScreenCaptureService : Service() {
             null
         ) ?: error("Android did not create the capture display")
 
+        updateNotification("Virtual display created • waiting for encoder output…")
         Log.i(TAG, "Capture started ${WIDTH}x${HEIGHT}@${FPS}fps, source=${metrics.widthPixels}x${metrics.heightPixels}")
     }
 
