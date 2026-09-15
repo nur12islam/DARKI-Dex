@@ -46,7 +46,7 @@ class DarkiClient {
                     val out = DataOutputStream(client.getOutputStream().buffered())
                     output = out
                     val hello = readPacket(input)
-                    require(hello.type == TYPE_HELLO) { "Expected HELLO, received ${hello.type}" }
+                    require(hello.type == TYPE_HELLO) { "Expected TYPE_HELLO, received ${hello.type}" }
                     writePacket(out, TYPE_HELLO_ACK, "device=DARKI-Desktop\nrole=client".toByteArray())
                     callback.onConnected(client.inetAddress.hostAddress ?: host)
                     while (!client.isClosed) {
@@ -87,6 +87,10 @@ class DarkiClient {
         send(TYPE_TEXT, text.toByteArray(Charsets.UTF_8))
     }
 
+    fun sendNavigation(action: Int) {
+        send(TYPE_NAVIGATION, ByteBuffer.allocate(4).putInt(action).array())
+    }
+
     private fun send(type: Int, payload: ByteArray) {
         synchronized(writeLock) {
             output?.let { writePacket(it, type, payload) }
@@ -125,14 +129,12 @@ class DarkiClient {
     private fun writePacket(output: DataOutputStream, type: Int, payload: ByteArray) {
         val limit = if (type == TYPE_VIDEO_FRAME) MAX_VIDEO_PAYLOAD else MAX_CONTROL_PAYLOAD
         require(payload.size <= limit)
-        synchronized(writeLock) {
-            output.writeInt(MAGIC)
-            output.writeShort(VERSION)
-            output.writeByte(type)
-            output.writeInt(payload.size)
-            output.write(payload)
-            output.flush()
-        }
+        output.writeInt(MAGIC)
+        output.writeShort(VERSION)
+        output.writeByte(type)
+        output.writeInt(payload.size)
+        output.write(payload)
+        output.flush()
     }
 
     fun parseVideoConfig(payload: ByteArray): VideoConfig {
