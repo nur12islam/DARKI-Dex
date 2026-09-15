@@ -1,67 +1,79 @@
-# DARKI-Dex
+# DARKI Link
 
-**Android-to-Android desktop environment for turning an Android tablet into a DeX-like workspace powered by an Android phone.**
+**Private Android-to-Android personal ecosystem for connecting your devices.**
 
-> Status: Architecture / feasibility phase — implementation has not started yet.
+> Status: Milestone 0 — foundation implementation.
+
+DARKI Link is the new direction of this repository. The original DARKI-Dex screen-streaming experiment has been retired; the repository is now being developed as a peer-to-peer device ecosystem.
+
+## Target devices
+
+- **iQOO Z10x (I2404)**
+- **Lenovo Tab 6 (A101LV)** running LineageOS 15 without Google Play Services
+
+The same app is installed on both devices. Neither device is permanently the master.
 
 ## Vision
 
-DARKI-Dex uses the **iQOO Z10x as the host/computing device** and the **Lenovo Tab 6 (A101LV, LineageOS 15) as the desktop client**. The tablet should feel like a real desktop environment rather than a simple mirrored-screen viewer.
+Use either device to interact with the other without physically touching it:
 
-The target experience is inspired by the feature set of [Android-Dex](https://github.com/Shrey113/Android-Dex), while DARKI-Dex will use its own Android-to-Android architecture and protocol rather than copying its closed-source implementation.
-
-## Target experience
-
-- Desktop workspace and wallpaper
-- Taskbar, launcher and app search
-- Window-style app containers
-- Keyboard and mouse control
-- Touch, swipe and scroll input
-- Android app launching/control
-- Notifications and media controls
-- Clipboard synchronization
-- File manager and file transfer
-- Screenshots and screen recording
-- Gaming controls and key mapping
-- Wi-Fi pairing and reconnect
-- Performance/quality controls
-- Dark/light desktop themes
+- secure device pairing
+- bidirectional device control
+- notification synchronization
+- instant file sharing
+- clipboard synchronization
+- media control
+- device status
+- screenshots
+- device finder/ring
+- Wi-Fi Direct and Bluetooth fallback
+- optional Internet/relay mode later
 
 ## Architecture
 
 ```text
-                 DARKI-Dex session
-                       │
-          ┌────────────┴────────────┐
-          │                         │
-     iQOO Z10x                 Lenovo Tab 6
-       HOST                       CLIENT
-          │                         │
-  Screen / Apps              Desktop Shell
-  Media / Audio              Windows / Taskbar
-  Device State               Keyboard / Mouse
-  Input Endpoint             Notifications
-          │                         │
-          └──── DARKI Protocol ─────┘
-                 Wi-Fi / USB
+                         DARKI LINK
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+          App UI                        Core Engine
+              │                             │
+              │          ┌──────────────────┼──────────────────┐
+              │          │                  │                  │
+              │       Pairing          Capability         Connection
+              │        Engine             Engine             Manager
+              │          │                  │                  │
+              └──────────┴──────────────────┴──────────────────┘
+                                            │
+                                    DARKI Protocol v1
+                                            │
+                         ┌──────────────────┼─────────────────┐
+                         │                  │                 │
+                        LAN             Wi-Fi Direct      Bluetooth
+                         │                  │                 │
+                         └──────────────────┴─────────────────┘
 ```
 
-## Important principle
+## Development order
 
-DARKI-Dex will not assume that Android permits a feature merely because a desktop operating system does. Each system-level capability will be tested on the target devices before the UI is built around it.
+**Protocol → pairing/security → LAN connection → capability exchange → command/status → notifications → file transfer → clipboard/media → Wi-Fi Direct → Bluetooth → Internet/advanced controls → polish.**
+
+## Android reality
+
+DARKI Link does not assume that an Android API exists simply because a desktop OS can perform the action. Some controls require explicit user permissions or system UI, and some are unavailable to ordinary third-party apps on particular OEM builds.
+
+For example, a remote request to enable a phone's normal Internet-sharing hotspot may be permission-gated or unsupported. The app will report that accurately and provide a supported fallback instead of pretending the command succeeded.
+
+The core product does not require Google Play Services.
 
 ## Documentation
 
-- [`docs/PLAN.md`](docs/PLAN.md) — roadmap, scope and success gates
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system architecture
-- [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — protocol draft
-- [`docs/RISKS.md`](docs/RISKS.md) — risks, blockers and fallback strategies
-- [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) — target-device compatibility matrix
-- [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) — validation and performance testing
-- [`docs/DECISIONS.md`](docs/DECISIONS.md) — architectural decisions
+- [`docs/DARKI-LINK-PLAN.md`](docs/DARKI-LINK-PLAN.md) — product roadmap and feasibility gates
+- [`docs/PROTOCOL-V1.md`](docs/PROTOCOL-V1.md) — protocol draft
+- [`docs/PLAN.md`](docs/PLAN.md) — legacy DARKI-Dex plan retained for historical context
 
 ## Current milestone
 
-**Milestone 0: Architecture and feasibility.**
+**Milestone 0 — Foundation**
 
-No production feature should be implemented until the feasibility plan and highest-risk assumptions are validated.
+The current code establishes the single-app Android structure, persistent device identity, protocol primitives, capability model, initial LAN transport and notification-listener foundation. Pairing and encrypted communication are the next gate.
