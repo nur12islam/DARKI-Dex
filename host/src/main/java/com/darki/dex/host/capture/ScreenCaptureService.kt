@@ -7,11 +7,10 @@ import android.app.Service
 import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
-import android.media.MediaCodec
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
-import android.os.Build
 import android.os.IBinder
+import android.util.DisplayMetrics
 import android.util.Log
 
 class ScreenCaptureService : Service() {
@@ -24,6 +23,7 @@ class ScreenCaptureService : Service() {
         private const val WIDTH = 1280
         private const val HEIGHT = 720
         private const val FPS = 30
+        private const val BITRATE = 6_000_000
     }
 
     private var projection: MediaProjection? = null
@@ -32,56 +32,61 @@ class ScreenCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, notification("Starting capture…"))
+        startForeground(NOTIFICATION_ID, notification())
+
+        if (projection != null) return START_STICKY
 
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
-        val resultData = intent?.parcelableIntentExtra(EXTRA_RESULT_DATA)
-            ?: return START_NOT_STICKY
+        val resultData = intent?.parcelableIntentExtra(EXTRA_RESULT_DATA) ?: return START_NOT_STICKY
+        val manager = getSystemService(MediaProjectionManager::class.java)
 
-        runCatching {
-            val manager = getSystemService(MediaProjectionManager::class.java)
-            projection = manager.getMediaProjection(resultCode, resultData)
-                ?: error("MediaProjection could not be created")
-
-            projection?.registerCallback(object : MediaProjection.Callback() {
+        projection = manager.getMediaProjection(resultCode, resultData).also { mediaProjection ->
+            mediaProjection.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
                     Log.i(TAG, "MediaProjection stopped by system/user")
                     stopCapture()
                     stopSelf()
                 }
             }, null)
-
-            encoder = H264Encoder(
-                width = WIDTH,
-                height = HEIGHT,
-                frameRate = FPS,
-                onFormat = { format -> Log.i(TAG, "H.264 format negotiated: $format") },
-                onFrame = { _, info ->
-                    val keyFrame = (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
-                    Log.v(TAG, "Encoded frame size=${info.size} pts=${info.presentationTimeUs} key=$keyFrame")
-                }
-            ).also { it.start() }
-
-            virtualDisplay = projection!!.createVirtualDisplay(
-                "DARKI-Dex",
-                WIDTH,
-                HEIGHT,
-                resources.displayMetrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                encoder!!.inputSurface,
-                null,
-                null
-            ) ?: error("VirtualDisplay could not be created")
-
-            Log.i(TAG, "Capture pipeline started: ${WIDTH}x${HEIGHT}@${FPS}fps")
-            startForeground(NOTIFICATION_ID, notification("Screen capture + H.264 encoder running"))
-        }.onFailure { error ->
-            Log.e(TAG, "Capture pipeline failed", error)
-            stopCapture()
-            stopSelf()
         }
 
-        return START_NOT_STICKY
+        startCapture()
+        return START_STICKY
+    }
+
+    private fun startCapture() {
+        val mediaProjection = checkNotNull(projection)
+
+        val encoder = H264Encoder(
+            width = WIDTH,
+            height = HEIGHT,
+            frameRate = FPS,
+            bitRate = BITRATE,
+            onFormat = { format -> Log.i(TAG, "Encoder configured: $format") },
+            onFrame = { _, info ->
+                Log.d(TAG, "Encoded frame size=${info.size} flags=${info.flags} ptsUs=${info.presentationTimeUs}")
+            }
+        )
+        encoder.start()
+        this.encoder = encoder
+
+        val metrics = DisplayMetrics().also {
+            @Suppress("DEPRECATION")
+            (getSystemService(DISPLAY_SERVICE) as android.view.WindowManager).defaultDisplay.getRealMetrics(it)
+        }
+
+        virtualDisplay = mediaProjection.createVirtualDisplay(
+            "DARKI-Dex",
+            WIDTH,
+            HEIGHT,
+            metrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            encoder.inputSurface,
+            null,
+            null
+        )
+
+        Log.i(TAG, "Capture started ${WIDTH}x${HEIGHT}@${FPS}fps, source=${metrics.widthPixels}x${metrics.heightPixels}")
     }
 
     private fun stopCapture() {
@@ -89,8 +94,13 @@ class ScreenCaptureService : Service() {
         virtualDisplay = null
         encoder?.stop()
         encoder = null
+        projection?.unregisterCallback(projectionCallback)
         projection?.stop()
         projection = null
+    }
+
+    private val projectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() = Unit
     }
 
     override fun onDestroy() {
@@ -101,20 +111,19 @@ class ScreenCaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createNotificationChannel() {
-        getSystemService(NotificationManager::class.java).createNotificationChannel(
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "DARKI-Dex capture", NotificationManager.IMPORTANCE_LOW)
         )
     }
 
-    private fun notification(text: String): Notification = Notification.Builder(this, CHANNEL_ID)
+    private fun notification(): Notification = Notification.Builder(this, CHANNEL_ID)
         .setContentTitle("DARKI-Dex")
-        .setContentText(text)
+        .setContentText("Screen capture is running")
         .setSmallIcon(android.R.drawable.ic_menu_view)
         .setOngoing(true)
         .build()
 }
 
 @Suppress("DEPRECATION")
-private fun Intent.parcelableIntentExtra(key: String): Intent? =
-    if (Build.VERSION.SDK_INT >= 33) getParcelableExtra(key, Intent::class.java)
-    else getParcelableExtra(key)
+private fun Intent.parcelableIntentExtra(key: String): Intent? = getParcelableExtra(key)
