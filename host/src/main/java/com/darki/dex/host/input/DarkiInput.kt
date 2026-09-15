@@ -13,6 +13,10 @@ object DarkiInput {
     const val MOUSE_UP = 2
     const val MOUSE_SCROLL = 3
 
+    const val NAV_BACK = 0
+    const val NAV_HOME = 1
+    const val NAV_RECENTS = 2
+
     data class MouseEvent(
         val action: Int,
         val x: Float,
@@ -39,5 +43,10 @@ object DarkiInput {
         require(payload.size == 13) { "Invalid key payload" }
         val input = ByteBuffer.wrap(payload)
         return KeyEvent(input.get().toInt(), input.int, input.int, input.int)
+    }
+
+    fun parseNavigation(payload: ByteArray): Int {
+        require(payload.size == 1) { "Invalid navigation payload" }
+        return ByteBuffer.wrap(payload).get().toInt()
     }
 }
