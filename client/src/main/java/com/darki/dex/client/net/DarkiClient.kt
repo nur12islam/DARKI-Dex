@@ -18,12 +18,17 @@ class DarkiClient {
         const val TYPE_PONG = 4
         const val TYPE_VIDEO_CONFIG = 10
         const val TYPE_VIDEO_FRAME = 11
+        const val TYPE_MOUSE = 20
+        const val TYPE_KEY = 21
+        const val TYPE_TEXT = 22
+        const val TYPE_NAVIGATION = 23
         private const val MAX_CONTROL_PAYLOAD = 64 * 1024
         private const val MAX_VIDEO_PAYLOAD = 4 * 1024 * 1024
     }
 
     private val executor = Executors.newSingleThreadExecutor()
     @Volatile private var socket: Socket? = null
+    @Volatile private var output: DataOutputStream? = null
 
     fun connect(host: String, port: Int = DEFAULT_PORT, callback: Callback) {
         executor.execute {
@@ -37,15 +42,14 @@ class DarkiClient {
                 socket = client
                 runCatching {
                     val input = DataInputStream(client.getInputStream().buffered())
-                    val output = DataOutputStream(client.getOutputStream().buffered())
+                    output = DataOutputStream(client.getOutputStream().buffered())
                     val hello = readPacket(input)
                     require(hello.type == TYPE_HELLO) { "Expected HELLO, received ${hello.type}" }
-                    writePacket(output, TYPE_HELLO_ACK, "device=DARKI-Desktop\nrole=client".toByteArray())
+                    sendPacket(TYPE_HELLO_ACK, "device=DARKI-Desktop\nrole=client".toByteArray())
                     callback.onConnected(client.inetAddress.hostAddress ?: host)
                     while (!client.isClosed) {
-                        when (val packet = readPacket(input)) {
-                            else -> callback.onPacket(packet.type, packet.payload)
-                        }
+                        val packet = readPacket(input)
+                        callback.onPacket(packet.type, packet.payload)
                     }
                 }.onFailure {
                     callback.onError(it)
@@ -55,9 +59,37 @@ class DarkiClient {
         }
     }
 
+    fun sendMouse(action: Int, x: Float, y: Float, button: Int = 0, scrollX: Float = 0f, scrollY: Float = 0f) =
+        sendPacket(TYPE_MOUSE, ByteBuffer.allocate(24).apply {
+            putInt(action); putInt(button); putFloat(x); putFloat(y); putFloat(scrollX); putFloat(scrollY)
+        }.array())
+
+    fun sendKey(action: Int, keyCode: Int, metaState: Int) =
+        sendPacket(TYPE_KEY, ByteBuffer.allocate(12).apply {
+            putInt(action); putInt(keyCode); putInt(metaState)
+        }.array())
+
+    fun sendText(value: String) = sendPacket(TYPE_TEXT, value.toByteArray(Charsets.UTF_8))
+
+    private fun sendPacket(type: Int, payload: ByteArray) {
+        if (payload.size > MAX_CONTROL_PAYLOAD) return
+        runCatching {
+            synchronized(this) {
+                val out = output ?: return
+                out.writeInt(MAGIC)
+                out.writeShort(VERSION)
+                out.writeByte(type)
+                out.writeInt(payload.size)
+                out.write(payload)
+                out.flush()
+            }
+        }.onFailure { close() }
+    }
+
     fun close() {
         socket?.runCatching { close() }
         socket = null
+        output = null
     }
 
     fun shutdown() {
@@ -81,16 +113,6 @@ class DarkiClient {
         val limit = if (type == TYPE_VIDEO_FRAME) MAX_VIDEO_PAYLOAD else MAX_CONTROL_PAYLOAD
         require(length in 0..limit) { "Invalid payload length: $length" }
         return Packet(type, ByteArray(length).also(input::readFully))
-    }
-
-    private fun writePacket(output: DataOutputStream, type: Int, payload: ByteArray) {
-        require(payload.size <= MAX_CONTROL_PAYLOAD)
-        output.writeInt(MAGIC)
-        output.writeShort(VERSION)
-        output.writeByte(type)
-        output.writeInt(payload.size)
-        output.write(payload)
-        output.flush()
     }
 
     fun parseVideoConfig(payload: ByteArray): VideoConfig {
