@@ -8,9 +8,9 @@ object MediaCodecListHelper {
         MediaCodecList(MediaCodecList.ALL_CODECS)
             .codecInfos
             .firstOrNull { info ->
-                !info.isEncoder.not() && info.isEncoder &&
+                info.isEncoder &&
                     info.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
-                    info.capabilitiesForType(mime).colorFormats.any { format ->
+                    info.getCapabilitiesForType(mime).colorFormats.any { format ->
                         format == MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
                     }
             }
