@@ -2,6 +2,7 @@ package com.darki.dex.host.net
 
 import android.util.Log
 import com.darki.dex.host.input.DarkiInput
+import com.darki.dex.host.input.DarkiInputDispatcher
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -43,9 +44,7 @@ class DarkiHostServer(
                 }
             } catch (e: Exception) {
                 if (running) Log.e(TAG, "Host server stopped unexpectedly", e)
-            } finally {
-                serverSocket = null
-            }
+            } finally { serverSocket = null }
         }
     }
 
@@ -56,16 +55,9 @@ class DarkiHostServer(
             Log.i(TAG, "Client connected: ${client.inetAddress.hostAddress}")
             DarkiSession(client).use { session ->
                 session.sendHello(deviceName, "host")
-                val packet = session.receive()
-                if (packet.type != DarkiProtocol.TYPE_HELLO_ACK) {
-                    Log.w(TAG, "Unexpected handshake packet=${packet.type}")
-                    return
-                }
+                if (session.receive().type != DarkiProtocol.TYPE_HELLO_ACK) return
                 sessions += session
-                latestVideoConfig?.let { config ->
-                    runCatching { session.send(DarkiProtocol.TYPE_VIDEO_CONFIG, config) }
-                        .onFailure { sessions.remove(session) }
-                }
+                latestVideoConfig?.let { config -> runCatching { session.send(DarkiProtocol.TYPE_VIDEO_CONFIG, config) }.onFailure { sessions.remove(session) } }
                 try {
                     while (running && !client.isClosed) {
                         val incoming = session.receive()
@@ -74,7 +66,7 @@ class DarkiHostServer(
                             DarkiProtocol.TYPE_MOUSE -> handleMouse(incoming.payload)
                             DarkiProtocol.TYPE_KEY -> handleKey(incoming.payload)
                             DarkiProtocol.TYPE_TEXT -> handleText(incoming.payload)
-                            else -> Unit
+                            DarkiProtocol.TYPE_NAVIGATION -> handleNavigation(incoming.payload)
                         }
                     }
                 } catch (_: IOException) {
@@ -89,37 +81,33 @@ class DarkiHostServer(
 
     private fun handleMouse(payload: ByteArray) {
         runCatching { DarkiInput.parseMouse(payload) }
-            .onSuccess { event ->
-                Log.d(TAG, "Mouse action=${event.action} x=${event.x} y=${event.y} button=${event.button} scroll=${event.scrollX},${event.scrollY}")
-                // Actual Android gesture injection is provided by DarkiAccessibilityService.
-                com.darki.dex.host.input.DarkiInputDispatcher.dispatchMouse(event)
-            }
+            .onSuccess(DarkiInputDispatcher::dispatchMouse)
             .onFailure { Log.w(TAG, "Invalid mouse input", it) }
     }
 
     private fun handleKey(payload: ByteArray) {
         runCatching { DarkiInput.parseKey(payload) }
-            .onSuccess { event ->
-                Log.d(TAG, "Key action=${event.action} code=${event.keyCode} meta=${event.metaState}")
-                com.darki.dex.host.input.DarkiInputDispatcher.dispatchKey(event)
-            }
+            .onSuccess(DarkiInputDispatcher::dispatchKey)
             .onFailure { Log.w(TAG, "Invalid key input", it) }
     }
 
     private fun handleText(payload: ByteArray) {
         runCatching { payload.toString(Charsets.UTF_8) }
-            .onSuccess { text -> com.darki.dex.host.input.DarkiInputDispatcher.dispatchText(text) }
+            .onSuccess(DarkiInputDispatcher::dispatchText)
             .onFailure { Log.w(TAG, "Invalid text input", it) }
+    }
+
+    private fun handleNavigation(payload: ByteArray) {
+        runCatching {
+            require(payload.size == 4) { "Invalid navigation payload" }
+            ByteBuffer.wrap(payload).int
+        }.onSuccess(DarkiInputDispatcher::dispatchNavigation)
+            .onFailure { Log.w(TAG, "Invalid navigation input", it) }
     }
 
     fun broadcastVideoConfig(width: Int, height: Int, csd0: ByteArray, csd1: ByteArray?) {
         val payload = ByteBuffer.allocate(16 + csd0.size + (csd1?.size ?: 0)).apply {
-            putInt(width)
-            putInt(height)
-            putInt(csd0.size)
-            put(csd0)
-            putInt(csd1?.size ?: 0)
-            csd1?.let(::put)
+            putInt(width); putInt(height); putInt(csd0.size); put(csd0); putInt(csd1?.size ?: 0); csd1?.let(::put)
         }.array()
         latestVideoConfig = payload
         broadcast(DarkiProtocol.TYPE_VIDEO_CONFIG, payload)
@@ -127,28 +115,19 @@ class DarkiHostServer(
 
     fun broadcastVideoFrame(data: ByteArray, presentationTimeUs: Long, flags: Int) {
         val payload = ByteBuffer.allocate(12 + data.size).apply {
-            putLong(presentationTimeUs)
-            putInt(flags)
-            put(data)
+            putLong(presentationTimeUs); putInt(flags); put(data)
         }.array()
         broadcast(DarkiProtocol.TYPE_VIDEO_FRAME, payload)
     }
 
     private fun broadcast(type: Int, payload: ByteArray) {
-        sessions.forEach { session ->
-            runCatching { session.send(type, payload) }
-                .onFailure { sessions.remove(session) }
-        }
+        sessions.forEach { session -> runCatching { session.send(type, payload) }.onFailure { sessions.remove(session) } }
     }
 
     override fun close() {
         running = false
         sessions.forEach { runCatching { it.close() } }
-        sessions.clear()
-        latestVideoConfig = null
-        serverSocket?.close()
-        executor.shutdownNow()
-        serverSocket = null
+        sessions.clear(); latestVideoConfig = null; serverSocket?.close(); executor.shutdownNow(); serverSocket = null
         if (current === this) current = null
     }
 }
