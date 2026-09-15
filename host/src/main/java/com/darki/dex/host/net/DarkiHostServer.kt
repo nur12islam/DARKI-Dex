@@ -24,6 +24,7 @@ class DarkiHostServer(
     private val sessions = CopyOnWriteArraySet<DarkiSession>()
     @Volatile private var running = false
     private var serverSocket: ServerSocket? = null
+    @Volatile private var latestVideoConfig: ByteArray? = null
 
     fun start() {
         check(!running) { "Server already running" }
@@ -60,6 +61,10 @@ class DarkiHostServer(
                     return
                 }
                 sessions += session
+                latestVideoConfig?.let { config ->
+                    runCatching { session.send(DarkiProtocol.TYPE_VIDEO_CONFIG, config) }
+                        .onFailure { sessions.remove(session) }
+                }
                 try {
                     while (running && !client.isClosed) {
                         val incoming = session.receive()
@@ -76,7 +81,7 @@ class DarkiHostServer(
     }
 
     fun broadcastVideoConfig(width: Int, height: Int, csd0: ByteArray, csd1: ByteArray?) {
-        val payload = ByteBuffer.allocate(12 + csd0.size + (csd1?.size ?: 0)).apply {
+        val payload = ByteBuffer.allocate(16 + csd0.size + (csd1?.size ?: 0)).apply {
             putInt(width)
             putInt(height)
             putInt(csd0.size)
@@ -84,6 +89,7 @@ class DarkiHostServer(
             putInt(csd1?.size ?: 0)
             csd1?.let(::put)
         }.array()
+        latestVideoConfig = payload
         broadcast(DarkiProtocol.TYPE_VIDEO_CONFIG, payload)
     }
 
@@ -107,6 +113,7 @@ class DarkiHostServer(
         running = false
         sessions.forEach { runCatching { it.close() } }
         sessions.clear()
+        latestVideoConfig = null
         serverSocket?.close()
         executor.shutdownNow()
         serverSocket = null
