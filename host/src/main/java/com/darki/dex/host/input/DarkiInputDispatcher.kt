@@ -1,12 +1,8 @@
 package com.darki.dex.host.input
 
 import android.util.Log
-import android.view.KeyEvent
 
-/**
- * Host-side input bridge. AccessibilityService owns the actual Android gesture/navigation
- * injection because ordinary applications cannot inject arbitrary touch events system-wide.
- */
+/** Host-side bridge between DARKI network packets and Android input services. */
 object DarkiInputDispatcher {
     private const val TAG = "DARKI-Input"
 
@@ -19,16 +15,17 @@ object DarkiInputDispatcher {
     }
 
     fun dispatchKey(event: DarkiInput.KeyEvent) {
-        val service = accessibilityService
-        if (service == null) {
-            Log.d(TAG, "Key received but accessibility service is not enabled")
-            return
-        }
-        service.dispatchKey(event)
+        accessibilityService?.dispatchKey(event)
+            ?: Log.d(TAG, "Key received but accessibility service is not enabled")
     }
 
     fun dispatchText(text: String) {
         accessibilityService?.dispatchText(text)
             ?: Log.d(TAG, "Text received but accessibility service is not enabled")
+    }
+
+    fun dispatchNavigation(action: Int) {
+        accessibilityService?.dispatchNavigation(action)
+            ?: Log.d(TAG, "Navigation received but accessibility service is not enabled")
     }
 }
