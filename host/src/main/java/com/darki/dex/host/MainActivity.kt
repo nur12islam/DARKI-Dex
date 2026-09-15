@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.darki.dex.host.capture.ScreenCaptureService
 import com.darki.dex.host.net.DarkiDiscovery
 import com.darki.dex.host.net.DarkiHostServer
 
@@ -56,9 +57,9 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != projectionRequest || resultCode != RESULT_OK || data == null) return
 
-        val serviceIntent = Intent(this, capture.ScreenCaptureService::class.java).apply {
-            putExtra(capture.ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
-            putExtra(capture.ScreenCaptureService.EXTRA_RESULT_DATA, data)
+        val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
+            putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
         }
         startForegroundService(serviceIntent)
     }
