@@ -29,7 +29,7 @@ object DarkiInput {
     )
 
     fun parseMouse(payload: ByteArray): MouseEvent {
-        require(payload.size == 24) { "Invalid mouse payload" }
+        require(payload.size == 21) { "Invalid mouse payload" }
         val input = ByteBuffer.wrap(payload)
         return MouseEvent(input.get().toInt(), input.float, input.float, input.int, input.float, input.float)
     }
