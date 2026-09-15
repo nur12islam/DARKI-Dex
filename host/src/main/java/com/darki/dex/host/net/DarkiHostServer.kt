@@ -27,10 +27,7 @@ class DarkiHostServer(
                 ServerSocket(port, 16, InetAddress.getByName("0.0.0.0")).use { server ->
                     serverSocket = server
                     Log.i(TAG, "DARKI host listening on TCP $port")
-                    while (running) {
-                        val socket = server.accept()
-                        executor.execute { handle(socket) }
-                    }
+                    while (running) executor.execute { handle(server.accept()) }
                 }
             } catch (e: Exception) {
                 if (running) Log.e(TAG, "Host server stopped unexpectedly", e)
@@ -44,17 +41,12 @@ class DarkiHostServer(
         socket.use { client ->
             client.tcpNoDelay = true
             Log.i(TAG, "Client connected: ${client.inetAddress.hostAddress}")
-
             DarkiSession(client).use { session ->
                 session.sendHello(deviceName, "host")
                 val packet = session.receive()
                 when (packet.type) {
-                    DarkiProtocol.TYPE_HELLO_ACK -> Log.i(TAG, "Client handshake accepted")
-                    DarkiProtocol.TYPE_PING -> {
-                        Log.i(TAG, "Client ping received")
-                        // A dedicated session implementation will own pong replies.
-                    }
-                    else -> Log.w(TAG, "Unexpected first packet type=${packet.type}")
+                    DarkiProtocol.TYPE_HELLO_ACK -> Log.i(TAG, "Handshake accepted")
+                    else -> Log.w(TAG, "Unexpected handshake packet=${packet.type}")
                 }
             }
         }
