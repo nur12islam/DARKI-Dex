@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DARKI-Dex"
-include(":host", ":client")
+rootProject.name = "DARKI-Link"
+include(":app")
