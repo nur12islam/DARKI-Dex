@@ -22,15 +22,21 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Install Android SDK
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android 35 platform
-        run: yes | sdkmanager --licenses >/dev/null || true
-             sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
 
       - name: Build debug APKs
-        run: ./gradlew :host:assembleDebug :client:assembleDebug
+        run: gradle --no-daemon :host:assembleDebug :client:assembleDebug
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
