@@ -42,30 +42,44 @@ class ScreenCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
-        startForeground(
-            NOTIFICATION_ID,
-            notification(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-        )
+        try {
+            startForeground(
+                NOTIFICATION_ID,
+                notification("Starting screen capture…"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to enter mediaProjection foreground service", t)
+            showError("Foreground service failed: ${message(t)}")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
 
         if (projection != null) return START_STICKY
 
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
         val resultData = intent?.parcelableIntentExtra(EXTRA_RESULT_DATA)
-            ?: return START_NOT_STICKY
+        if (resultCode != RESULT_OK || resultData == null) {
+            showError("Screen capture permission data was missing")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
         val manager = getSystemService(MediaProjectionManager::class.java)
+        try {
+            projection = checkNotNull(manager.getMediaProjection(resultCode, resultData))
+            projection?.registerCallback(projectionCallback, null)
+            startCapture()
+            updateNotification("Screen capture is running")
+            Log.i(TAG, "DARKI-Dex screen capture started successfully")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to start capture", t)
+            showError("Capture failed: ${message(t)}")
+            releaseCapture(stopProjection = true)
+            stopSelf(startId)
+        }
 
-        projection = manager.getMediaProjection(resultCode, resultData)
-        projection?.registerCallback(projectionCallback, null)
-
-        runCatching { startCapture() }
-            .onFailure {
-                Log.e(TAG, "Unable to start capture", it)
-                releaseCapture(stopProjection = true)
-                stopSelf()
-            }
-
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startCapture() {
@@ -109,7 +123,7 @@ class ScreenCaptureService : Service() {
             newEncoder.inputSurface,
             null,
             null
-        )
+        ) ?: error("Android did not create the capture display")
 
         Log.i(TAG, "Capture started ${WIDTH}x${HEIGHT}@${FPS}fps, source=${metrics.widthPixels}x${metrics.heightPixels}")
     }
@@ -145,12 +159,24 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    private fun notification(): Notification = Notification.Builder(this, CHANNEL_ID)
+    private fun updateNotification(text: String) {
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
+    }
+
+    private fun showError(text: String) {
+        Log.e(TAG, text)
+        updateNotification(text)
+    }
+
+    private fun notification(text: String): Notification = Notification.Builder(this, CHANNEL_ID)
         .setContentTitle("DARKI-Dex")
-        .setContentText("Screen capture is running")
+        .setContentText(text)
         .setSmallIcon(android.R.drawable.ic_menu_view)
         .setOngoing(true)
         .build()
+
+    private fun message(t: Throwable): String =
+        t.message?.take(160)?.ifBlank { t.javaClass.simpleName } ?: t.javaClass.simpleName
 }
 
 @Suppress("DEPRECATION")
