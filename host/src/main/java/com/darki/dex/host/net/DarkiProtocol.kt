@@ -5,13 +5,7 @@ import java.io.DataOutputStream
 import java.io.EOFException
 import java.net.Socket
 
-/**
- * Minimal, versioned framing layer for DARKI-Dex.
- *
- * This is intentionally independent from scrcpy's internal protocol. Control
- * messages are length-prefixed; video can later use the same session with a
- * dedicated high-throughput channel.
- */
+/** Versioned framing layer for DARKI-Dex control and video packets. */
 object DarkiProtocol {
     const val MAGIC = 0x4441524B // "DARK"
     const val VERSION = 1
@@ -31,9 +25,8 @@ object DarkiProtocol {
 
     fun write(out: DataOutputStream, type: Int, payload: ByteArray = ByteArray(0)) {
         require(type in 0..255) { "type must fit in one unsigned byte" }
-        require(payload.size <= MAX_CONTROL_PAYLOAD || type == TYPE_VIDEO_FRAME) {
-            "payload too large"
-        }
+        val limit = if (type == TYPE_VIDEO_FRAME) MAX_VIDEO_PAYLOAD else MAX_CONTROL_PAYLOAD
+        require(payload.size <= limit) { "payload too large: ${payload.size}" }
         out.writeInt(MAGIC)
         out.writeShort(VERSION)
         out.writeByte(type)
@@ -44,17 +37,12 @@ object DarkiProtocol {
 
     fun read(input: DataInputStream): Packet {
         try {
-            val magic = input.readInt()
-            require(magic == MAGIC) { "Invalid DARKI packet magic" }
-
-            val version = input.readUnsignedShort()
-            require(version == VERSION) { "Unsupported DARKI protocol version: $version" }
-
+            require(input.readInt() == MAGIC) { "Invalid DARKI packet magic" }
+            require(input.readUnsignedShort() == VERSION) { "Unsupported DARKI protocol version" }
             val type = input.readUnsignedByte()
             val length = input.readInt()
             val limit = if (type == TYPE_VIDEO_FRAME) MAX_VIDEO_PAYLOAD else MAX_CONTROL_PAYLOAD
             require(length in 0..limit) { "Invalid DARKI payload length: $length" }
-
             return Packet(type, ByteArray(length).also(input::readFully))
         } catch (e: EOFException) {
             throw e
@@ -65,13 +53,18 @@ object DarkiProtocol {
 class DarkiSession(private val socket: Socket) : AutoCloseable {
     private val input = DataInputStream(socket.getInputStream().buffered())
     private val output = DataOutputStream(socket.getOutputStream().buffered())
+    private val writeLock = Any()
 
     fun sendHello(deviceName: String, role: String) {
         val payload = "device=$deviceName\nrole=$role\nprotocol=${DarkiProtocol.VERSION}".toByteArray()
-        DarkiProtocol.write(output, DarkiProtocol.TYPE_HELLO, payload)
+        send(DarkiProtocol.TYPE_HELLO, payload)
     }
 
-    fun sendPing() = DarkiProtocol.write(output, DarkiProtocol.TYPE_PING)
+    fun send(type: Int, payload: ByteArray = ByteArray(0)) {
+        synchronized(writeLock) { DarkiProtocol.write(output, type, payload) }
+    }
+
+    fun sendPing() = send(DarkiProtocol.TYPE_PING)
 
     fun receive(): DarkiProtocol.Packet = DarkiProtocol.read(input)
 
