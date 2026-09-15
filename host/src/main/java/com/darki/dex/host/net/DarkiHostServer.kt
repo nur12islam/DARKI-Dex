@@ -1,6 +1,7 @@
 package com.darki.dex.host.net
 
 import android.util.Log
+import com.darki.dex.host.input.DarkiInput
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -68,7 +69,13 @@ class DarkiHostServer(
                 try {
                     while (running && !client.isClosed) {
                         val incoming = session.receive()
-                        if (incoming.type == DarkiProtocol.TYPE_PING) session.send(DarkiProtocol.TYPE_PONG)
+                        when (incoming.type) {
+                            DarkiProtocol.TYPE_PING -> session.send(DarkiProtocol.TYPE_PONG)
+                            DarkiProtocol.TYPE_MOUSE -> handleMouse(incoming.payload)
+                            DarkiProtocol.TYPE_KEY -> handleKey(incoming.payload)
+                            DarkiProtocol.TYPE_TEXT -> handleText(incoming.payload)
+                            else -> Unit
+                        }
                     }
                 } catch (_: IOException) {
                     // Client disconnected.
@@ -78,6 +85,31 @@ class DarkiHostServer(
                 }
             }
         }
+    }
+
+    private fun handleMouse(payload: ByteArray) {
+        runCatching { DarkiInput.parseMouse(payload) }
+            .onSuccess { event ->
+                Log.d(TAG, "Mouse action=${event.action} x=${event.x} y=${event.y} button=${event.button} scroll=${event.scrollX},${event.scrollY}")
+                // Actual Android gesture injection is provided by DarkiAccessibilityService.
+                com.darki.dex.host.input.DarkiInputDispatcher.dispatchMouse(event)
+            }
+            .onFailure { Log.w(TAG, "Invalid mouse input", it) }
+    }
+
+    private fun handleKey(payload: ByteArray) {
+        runCatching { DarkiInput.parseKey(payload) }
+            .onSuccess { event ->
+                Log.d(TAG, "Key action=${event.action} code=${event.keyCode} meta=${event.metaState}")
+                com.darki.dex.host.input.DarkiInputDispatcher.dispatchKey(event)
+            }
+            .onFailure { Log.w(TAG, "Invalid key input", it) }
+    }
+
+    private fun handleText(payload: ByteArray) {
+        runCatching { payload.toString(Charsets.UTF_8) }
+            .onSuccess { text -> com.darki.dex.host.input.DarkiInputDispatcher.dispatchText(text) }
+            .onFailure { Log.w(TAG, "Invalid text input", it) }
     }
 
     fun broadcastVideoConfig(width: Int, height: Int, csd0: ByteArray, csd1: ByteArray?) {
