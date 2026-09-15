@@ -3,6 +3,8 @@ package com.darki.dex.client
 import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -14,6 +16,11 @@ import com.darki.dex.client.net.DarkiDiscovery
 import com.darki.dex.client.stream.H264Decoder
 
 class MainActivity : Activity(), SurfaceHolder.Callback {
+    companion object {
+        private const val HOST_WIDTH = 1280f
+        private const val HOST_HEIGHT = 720f
+    }
+
     private val discovery = DarkiDiscovery()
     private val client = DarkiClient()
     private val hosts = linkedMapOf<String, DarkiDiscovery.Host>()
@@ -40,6 +47,37 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         surfaceView = SurfaceView(this).apply {
             setBackgroundColor(Color.BLACK)
             holder.addCallback(this@MainActivity)
+            isFocusableInTouchMode = true
+            setOnKeyListener { _, keyCode, event ->
+                if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
+                    client.sendKey(event.action, keyCode, event.metaState, event.unicodeChar)
+                    true
+                } else false
+            }
+            setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        requestFocus()
+                        sendMouse(DarkiMouseAction.DOWN, event)
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        sendMouse(DarkiMouseAction.UP, event)
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        sendMouse(DarkiMouseAction.MOVE, event)
+                        true
+                    }
+                    else -> true
+                }
+            }
+            setOnGenericMotionListener { _, event ->
+                if (event.action == MotionEvent.ACTION_SCROLL) {
+                    sendMouse(DarkiMouseAction.SCROLL, event, event.getAxisValue(MotionEvent.AXIS_HSCROLL), event.getAxisValue(MotionEvent.AXIS_VSCROLL))
+                    true
+                } else false
+            }
             visibility = View.GONE
         }
         hostList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -50,6 +88,21 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         root.addView(surfaceView, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(hostList)
         setContentView(root)
+    }
+
+    private fun sendMouse(action: Int, event: MotionEvent, scrollX: Float = 0f, scrollY: Float = 0f) {
+        val viewWidth = surfaceView.width.takeIf { it > 0 }?.toFloat() ?: return
+        val viewHeight = surfaceView.height.takeIf { it > 0 }?.toFloat() ?: return
+        val x = (event.x / viewWidth * HOST_WIDTH).coerceIn(0f, HOST_WIDTH)
+        val y = (event.y / viewHeight * HOST_HEIGHT).coerceIn(0f, HOST_HEIGHT)
+        client.sendMouse(action, x, y, event.buttonState, scrollX, scrollY)
+    }
+
+    private object DarkiMouseAction {
+        const val DOWN = 1
+        const val UP = 2
+        const val MOVE = 0
+        const val SCROLL = 3
     }
 
     private fun startDiscovery() {
@@ -79,7 +132,10 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             setOnClickListener {
                 isEnabled = false; text = "Connecting…"; status.text = "Connecting to ${host.name}…"
                 client.connect(host.address, host.port, object : DarkiClient.Callback {
-                    override fun onConnected(hostAddress: String) = runOnUiThread { status.text = "Connected • waiting for video…" }
+                    override fun onConnected(hostAddress: String) = runOnUiThread {
+                        status.text = "Connected • waiting for video…"
+                        surfaceView.requestFocus()
+                    }
                     override fun onPacket(type: Int, payload: ByteArray) = runOnUiThread { handlePacket(type, payload) }
                     override fun onError(error: Throwable) = runOnUiThread {
                         status.text = "Connection lost: ${error.message ?: error.javaClass.simpleName}"
