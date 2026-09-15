@@ -5,9 +5,9 @@ import java.io.DataOutputStream
 import java.io.EOFException
 import java.net.Socket
 
-/** Versioned framing layer for DARKI-Dex control and video packets. */
+/** Versioned framing layer for DARKI-Dex control, input and video packets. */
 object DarkiProtocol {
-    const val MAGIC = 0x4441524B // "DARK"
+    const val MAGIC = 0x4441524B
     const val VERSION = 1
 
     const val TYPE_HELLO = 1
@@ -16,6 +16,10 @@ object DarkiProtocol {
     const val TYPE_PONG = 4
     const val TYPE_VIDEO_CONFIG = 10
     const val TYPE_VIDEO_FRAME = 11
+    const val TYPE_MOUSE = 20
+    const val TYPE_KEY = 21
+    const val TYPE_TEXT = 22
+    const val TYPE_NAVIGATION = 23
     const val TYPE_ERROR = 255
 
     const val MAX_CONTROL_PAYLOAD = 64 * 1024
@@ -24,7 +28,7 @@ object DarkiProtocol {
     data class Packet(val type: Int, val payload: ByteArray)
 
     fun write(out: DataOutputStream, type: Int, payload: ByteArray = ByteArray(0)) {
-        require(type in 0..255) { "type must fit in one unsigned byte" }
+        require(type in 0..255)
         val limit = if (type == TYPE_VIDEO_FRAME) MAX_VIDEO_PAYLOAD else MAX_CONTROL_PAYLOAD
         require(payload.size <= limit) { "payload too large: ${payload.size}" }
         out.writeInt(MAGIC)
