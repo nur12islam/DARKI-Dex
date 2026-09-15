@@ -1,12 +1,17 @@
 package com.darki.dex.client.net
 
-import com.darki.dex.host.net.DarkiDiscovery
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.util.concurrent.Executors
 
 class DarkiDiscoveryClient {
+    companion object {
+        private const val PORT = 47290
+        private const val PREFIX = "DARKI_DISCOVER_V1"
+        private const val BROADCAST_ADDRESS = "255.255.255.255"
+    }
+
     data class Host(val name: String, val address: InetAddress, val port: Int)
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -18,13 +23,13 @@ class DarkiDiscoveryClient {
                 DatagramSocket().use { socket ->
                     socket.broadcast = true
                     socket.soTimeout = 500
-                    val request = "${DarkiDiscovery.PREFIX}\nrequest=discover".toByteArray()
+                    val request = "$PREFIX\nrequest=discover".toByteArray(Charsets.UTF_8)
                     socket.send(
                         DatagramPacket(
                             request,
                             request.size,
-                            InetAddress.getByName("255.255.255.255"),
-                            DarkiDiscovery.PORT
+                            InetAddress.getByName(BROADCAST_ADDRESS),
+                            PORT
                         )
                     )
 
@@ -50,7 +55,7 @@ class DarkiDiscoveryClient {
     private fun parse(packet: DatagramPacket): Host? {
         val text = String(packet.data, packet.offset, packet.length, Charsets.UTF_8)
         val lines = text.lines()
-        if (lines.firstOrNull() != DarkiDiscovery.PREFIX) return null
+        if (lines.firstOrNull() != PREFIX) return null
         val values = lines.drop(1).mapNotNull { line ->
             val i = line.indexOf('=')
             if (i <= 0) null else line.substring(0, i) to line.substring(i + 1)
