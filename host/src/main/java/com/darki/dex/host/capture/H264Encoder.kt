@@ -4,14 +4,10 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.util.Log
+import android.view.Surface
 import java.nio.ByteBuffer
 
-/**
- * Hardware-first H.264 encoder used by the MediaProjection proof.
- *
- * The encoder consumes frames through an input Surface. Encoded access units are
- * drained on a dedicated thread so the capture service never blocks on codec I/O.
- */
+/** Hardware-first H.264 encoder whose input is a Surface backed by MediaProjection. */
 class H264Encoder(
     private val width: Int,
     private val height: Int,
@@ -27,11 +23,10 @@ class H264Encoder(
     }
 
     private var codec: MediaCodec? = null
-    private var drainThread: Thread? = null
-    @Volatile private var running = false
+    private var surface: Surface? = null
 
-    val inputSurface
-        get() = codec?.createInputSurface()
+    val inputSurface: Surface
+        get() = checkNotNull(surface) { "Encoder has not been started" }
 
     fun start() {
         check(codec == null) { "Encoder already started" }
@@ -39,37 +34,34 @@ class H264Encoder(
         val selected = MediaCodecListHelper.findEncoder(MIME)
             ?: error("No H.264 encoder is available on this device")
 
-        Log.i(TAG, "Using encoder: ${selected.name}")
-        Log.i(TAG, "Hardware accelerated=${selected.isHardwareAccelerated}, vendor=${selected.isVendor}")
+        Log.i(TAG, "Using encoder=${selected.name}, hardware=${selected.isHardwareAccelerated}, vendor=${selected.isVendor}")
 
         val format = MediaFormat.createVideoFormat(MIME, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, iFrameIntervalSeconds)
-            if (android.os.Build.VERSION.SDK_INT >= 29) {
-                setInteger(MediaFormat.KEY_PRIORITY, 0)
-            }
         }
 
-        codec = MediaCodec.createByCodecName(selected.name).also {
-            it.setCallback(object : MediaCodec.Callback() {
+        codec = MediaCodec.createByCodecName(selected.name).also { c ->
+            c.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            surface = c.createInputSurface()
+            c.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
 
-                override fun onOutputBufferAvailable(
-                    codec: MediaCodec,
-                    index: Int,
-                    info: MediaCodec.BufferInfo
-                ) {
-                    val buffer = codec.getOutputBuffer(index)
-                    if (buffer != null && info.size > 0) {
-                        val duplicate = buffer.duplicate().apply {
-                            position(info.offset)
-                            limit(info.offset + info.size)
+                override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
+                    try {
+                        val buffer = codec.getOutputBuffer(index)
+                        if (buffer != null && info.size > 0) {
+                            val duplicate = buffer.duplicate().apply {
+                                position(info.offset)
+                                limit(info.offset + info.size)
+                            }
+                            onFrame(duplicate.slice(), info)
                         }
-                        onFrame(duplicate.slice(), info)
+                    } finally {
+                        codec.releaseOutputBuffer(index, false)
                     }
-                    codec.releaseOutputBuffer(index, false)
                 }
 
                 override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
@@ -81,27 +73,15 @@ class H264Encoder(
                     Log.e(TAG, "Codec error", e)
                 }
             })
-            it.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            it.start()
-        }
-
-        running = true
-        drainThread = Thread({
-            // Callback mode does the actual draining. This thread simply keeps a
-            // named lifecycle point for future encoder metrics/backpressure work.
-            while (running) Thread.sleep(1_000)
-        }, "darki-h264-lifecycle").apply {
-            isDaemon = true
-            start()
+            c.start()
         }
     }
 
     fun stop() {
-        running = false
-        drainThread?.interrupt()
-        drainThread = null
         codec?.runCatching { stop() }
         codec?.release()
         codec = null
+        surface?.release()
+        surface = null
     }
 }
