@@ -3,14 +3,16 @@ package com.darki.dex.host.input
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import android.os.Build
 import android.util.Log
-import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 
 class DarkiAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "DARKI-Accessibility"
+
+        const val NAV_BACK = 1
+        const val NAV_HOME = 2
+        const val NAV_RECENTS = 3
     }
 
     override fun onServiceConnected() {
@@ -34,15 +36,13 @@ class DarkiAccessibilityService : AccessibilityService() {
         when (event.action) {
             DarkiInput.MOUSE_DOWN -> tap(event.x, event.y)
             DarkiInput.MOUSE_SCROLL -> scroll(event.x, event.y, event.scrollY)
-            DarkiInput.MOUSE_MOVE -> move(event.x, event.y)
+            DarkiInput.MOUSE_MOVE -> Unit
             DarkiInput.MOUSE_UP -> Unit
             else -> Log.w(TAG, "Unknown mouse action=${event.action}")
         }
     }
 
     fun dispatchKey(event: DarkiInput.KeyEvent) {
-        // AccessibilityService cannot inject arbitrary hardware key events into every app.
-        // Keep the event visible in logs until the dedicated IME/text path is implemented.
         Log.d(TAG, "Key action=${event.action} code=${event.keyCode} meta=${event.metaState} unicode=${event.unicodeChar}")
     }
 
@@ -50,15 +50,23 @@ class DarkiAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Text input length=${text.length}")
     }
 
-    private fun tap(x: Float, y: Float) {
-        val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, 1L)
-        dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    fun dispatchNavigation(action: Int) {
+        val globalAction = when (action) {
+            NAV_BACK -> GLOBAL_ACTION_BACK
+            NAV_HOME -> GLOBAL_ACTION_HOME
+            NAV_RECENTS -> GLOBAL_ACTION_RECENTS
+            else -> null
+        }
+        if (globalAction != null) {
+            performGlobalAction(globalAction)
+        } else {
+            Log.w(TAG, "Unknown navigation action=$action")
+        }
     }
 
-    private fun move(x: Float, y: Float) {
+    private fun tap(x: Float, y: Float) {
         val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, 1L)
+        val stroke = GestureDescription.StrokeDescription(path, 0L, 40L)
         dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
     }
 
