@@ -2,6 +2,7 @@ package com.darki.dex.client
 
 import android.app.Activity
 import android.graphics.Color
+import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -14,11 +15,14 @@ import android.widget.TextView
 import com.darki.dex.client.net.DarkiClient
 import com.darki.dex.client.net.DarkiDiscovery
 import com.darki.dex.client.stream.H264Decoder
+import java.net.InetAddress
+import java.util.Locale
 
 class MainActivity : Activity(), SurfaceHolder.Callback {
     companion object {
         private const val HOST_WIDTH = 1280f
         private const val HOST_HEIGHT = 720f
+        private const val DISCOVERY_FALLBACK_DELAY_MS = 3500L
     }
 
     private val discovery = DarkiDiscovery()
@@ -31,8 +35,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private var decoder: H264Decoder? = null
     private var surfaceReady = false
     private var pendingConfig: DarkiClient.VideoConfig? = null
-    private var lastMouseX = 0f
-    private var lastMouseY = 0f
+    private var fallbackAttempted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,30 +78,15 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             }
             setOnTouchListener { _, event ->
                 when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        requestFocus()
-                        sendMouse(DarkiMouseAction.DOWN, event)
-                        true
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        sendMouse(DarkiMouseAction.UP, event)
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        sendMouse(DarkiMouseAction.MOVE, event)
-                        true
-                    }
+                    MotionEvent.ACTION_DOWN -> { requestFocus(); sendMouse(DarkiMouseAction.DOWN, event); true }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { sendMouse(DarkiMouseAction.UP, event); true }
+                    MotionEvent.ACTION_MOVE -> { sendMouse(DarkiMouseAction.MOVE, event); true }
                     else -> true
                 }
             }
             setOnGenericMotionListener { _, event ->
                 if (event.action == MotionEvent.ACTION_SCROLL) {
-                    sendMouse(
-                        DarkiMouseAction.SCROLL,
-                        event,
-                        event.getAxisValue(MotionEvent.AXIS_HSCROLL),
-                        event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-                    )
+                    sendMouse(DarkiMouseAction.SCROLL, event, event.getAxisValue(MotionEvent.AXIS_HSCROLL), event.getAxisValue(MotionEvent.AXIS_VSCROLL))
                     true
                 } else false
             }
@@ -119,8 +107,6 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         val viewHeight = surfaceView.height.takeIf { it > 0 }?.toFloat() ?: return
         val x = (event.x / viewWidth * HOST_WIDTH).coerceIn(0f, HOST_WIDTH)
         val y = (event.y / viewHeight * HOST_HEIGHT).coerceIn(0f, HOST_HEIGHT)
-        lastMouseX = x
-        lastMouseY = y
         val button = when {
             event.buttonState and MotionEvent.BUTTON_PRIMARY != 0 -> 1
             event.buttonState and MotionEvent.BUTTON_SECONDARY != 0 -> 2
@@ -142,20 +128,60 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         decoder?.stop(); decoder = null
         surfaceView.visibility = View.GONE
         pendingConfig = null
+        fallbackAttempted = false
         hosts.clear(); hostList.removeAllViews()
         status.text = "Searching local network…"
+        scanButton.isEnabled = false
         discovery.start(object : DarkiDiscovery.Callback {
-            override fun onStarted() = runOnUiThread { status.text = "Listening for DARKI-Dex hosts…"; scanButton.isEnabled = true }
+            override fun onStarted() {
+                runOnUiThread {
+                    status.text = "Listening for DARKI-Dex hosts…"
+                    scanButton.isEnabled = true
+                    window.decorView.postDelayed({ tryHotspotGatewayFallback() }, DISCOVERY_FALLBACK_DELAY_MS)
+                }
+            }
             override fun onHost(host: DarkiDiscovery.Host) = runOnUiThread {
                 val key = "${host.address}:${host.port}"
                 if (hosts.putIfAbsent(key, host) == null) addHost(host)
                 status.text = "${hosts.size} host${if (hosts.size == 1) "" else "s"} found"
             }
-            override fun onError(error: Throwable) = runOnUiThread { status.text = "Discovery error: ${error.message ?: error.javaClass.simpleName}"; scanButton.isEnabled = true }
+            override fun onError(error: Throwable) = runOnUiThread {
+                status.text = "Discovery error: ${error.message ?: error.javaClass.simpleName}"
+                scanButton.isEnabled = true
+                tryHotspotGatewayFallback()
+            }
         })
     }
 
+    private fun tryHotspotGatewayFallback() {
+        if (fallbackAttempted || hosts.isNotEmpty()) return
+        fallbackAttempted = true
+        val gateway = runCatching {
+            val wifi = getSystemService(WIFI_SERVICE) as WifiManager
+            val gatewayInt = wifi.dhcpInfo?.gateway ?: 0
+            if (gatewayInt == 0) null else InetAddress.getByAddress(
+                byteArrayOf(
+                    (gatewayInt and 0xff).toByte(),
+                    ((gatewayInt shr 8) and 0xff).toByte(),
+                    ((gatewayInt shr 16) and 0xff).toByte(),
+                    ((gatewayInt shr 24) and 0xff).toByte()
+                )
+            )
+        }.getOrNull()
+
+        if (gateway == null) {
+            status.text = "No host found • check hotspot connection"
+            return
+        }
+
+        val host = DarkiDiscovery.Host("Hotspot host", gateway.hostAddress ?: return, DarkiClient.DEFAULT_PORT)
+        addHost(host)
+        status.text = "Hotspot host found • ${host.address}"
+    }
+
     private fun addHost(host: DarkiDiscovery.Host) {
+        val key = "${host.address}:${host.port}"
+        if (hosts.putIfAbsent(key, host) != null) return
         val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
         val name = TextView(this).apply { text = host.name; textSize = 19f }
         val address = TextView(this).apply { text = "${host.address}:${host.port}"; textSize = 14f }
