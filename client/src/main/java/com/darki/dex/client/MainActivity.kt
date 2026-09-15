@@ -31,11 +31,30 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private var decoder: H264Decoder? = null
     private var surfaceReady = false
     private var pendingConfig: DarkiClient.VideoConfig? = null
+    private var lastMouseX = 0f
+    private var lastMouseY = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
         startDiscovery()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (::surfaceView.isInitialized && surfaceView.visibility == View.VISIBLE) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_BACK -> {
+                    if (event.action == KeyEvent.ACTION_DOWN) client.sendNavigation(1)
+                    return true
+                }
+                KeyEvent.KEYCODE_HOME -> return super.dispatchKeyEvent(event)
+                KeyEvent.KEYCODE_APP_SWITCH -> {
+                    if (event.action == KeyEvent.ACTION_DOWN) client.sendNavigation(3)
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private fun buildUi() {
@@ -61,7 +80,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
                         sendMouse(DarkiMouseAction.DOWN, event)
                         true
                     }
-                    MotionEvent.ACTION_UP -> {
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         sendMouse(DarkiMouseAction.UP, event)
                         true
                     }
@@ -74,7 +93,12 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             }
             setOnGenericMotionListener { _, event ->
                 if (event.action == MotionEvent.ACTION_SCROLL) {
-                    sendMouse(DarkiMouseAction.SCROLL, event, event.getAxisValue(MotionEvent.AXIS_HSCROLL), event.getAxisValue(MotionEvent.AXIS_VSCROLL))
+                    sendMouse(
+                        DarkiMouseAction.SCROLL,
+                        event,
+                        event.getAxisValue(MotionEvent.AXIS_HSCROLL),
+                        event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                    )
                     true
                 } else false
             }
@@ -95,7 +119,15 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         val viewHeight = surfaceView.height.takeIf { it > 0 }?.toFloat() ?: return
         val x = (event.x / viewWidth * HOST_WIDTH).coerceIn(0f, HOST_WIDTH)
         val y = (event.y / viewHeight * HOST_HEIGHT).coerceIn(0f, HOST_HEIGHT)
-        client.sendMouse(action, x, y, event.buttonState, scrollX, scrollY)
+        lastMouseX = x
+        lastMouseY = y
+        val button = when {
+            event.buttonState and MotionEvent.BUTTON_PRIMARY != 0 -> 1
+            event.buttonState and MotionEvent.BUTTON_SECONDARY != 0 -> 2
+            event.buttonState and MotionEvent.BUTTON_TERTIARY != 0 -> 3
+            else -> 0
+        }
+        client.sendMouse(action, x, y, button, scrollX, scrollY)
     }
 
     private object DarkiMouseAction {
