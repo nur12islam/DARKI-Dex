@@ -35,7 +35,7 @@ object DarkiInput {
     }
 
     fun parseKey(payload: ByteArray): KeyEvent {
-        require(payload.size == 16) { "Invalid key payload" }
+        require(payload.size == 13) { "Invalid key payload" }
         val input = ByteBuffer.wrap(payload)
         return KeyEvent(input.get().toInt(), input.int, input.int, input.int)
     }
