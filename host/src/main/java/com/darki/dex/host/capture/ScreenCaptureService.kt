@@ -1,5 +1,6 @@
 package com.darki.dex.host.capture
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -59,7 +60,7 @@ class ScreenCaptureService : Service() {
 
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
         val resultData = intent?.parcelableIntentExtra(EXTRA_RESULT_DATA)
-        if (resultCode != RESULT_OK || resultData == null) {
+        if (resultCode != Activity.RESULT_OK || resultData == null) {
             showError("Screen capture permission data was missing")
             stopSelf(startId)
             return START_NOT_STICKY
