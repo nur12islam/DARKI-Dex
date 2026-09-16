@@ -6,10 +6,7 @@ import java.security.PublicKey
 import java.security.spec.X509EncodedKeySpec
 import java.util.concurrent.atomic.AtomicReference
 
-/**
- * In-memory state machine for a single authenticated DARKI Link session.
- * Persistent trust storage and QR UI are added in the next security milestone.
- */
+/** In-memory state for one authenticated DARKI Link session. */
 class PairingSession(private val localIdentity: KeyPair) {
     enum class State { IDLE, CHALLENGE_SENT, AUTHENTICATED, REJECTED }
 
@@ -18,6 +15,12 @@ class PairingSession(private val localIdentity: KeyPair) {
     private var sessionKey: ByteArray? = null
 
     val state: State get() = stateRef.get()
+
+    fun reset() {
+        peerKey = null
+        sessionKey = null
+        stateRef.set(State.IDLE)
+    }
 
     fun createChallenge(): String {
         stateRef.set(State.CHALLENGE_SENT)
@@ -41,15 +44,13 @@ class PairingSession(private val localIdentity: KeyPair) {
 
     fun sign(transcript: ByteArray): ByteArray = SessionCrypto.sign(transcript, localIdentity)
 
-    fun encrypt(plaintext: ByteArray): ByteArray =
-        SessionCrypto.encrypt(plaintext, requireSessionKey())
+    fun encrypt(plaintext: ByteArray): ByteArray = SessionCrypto.encrypt(plaintext, requireSessionKey())
 
-    fun decrypt(packet: ByteArray): ByteArray =
-        SessionCrypto.decrypt(packet, requireSessionKey())
+    fun decrypt(packet: ByteArray): ByteArray = SessionCrypto.decrypt(packet, requireSessionKey())
 
     fun fingerprint(): String? = peerKey?.let { SessionCrypto.fingerprint(it.encoded) }
 
-    private fun requireSessionKey(): ByteArray =
-        check(state == State.AUTHENTICATED) { "DARKI Link session is not authenticated" }
-            .let { sessionKey!! }
+    private fun requireSessionKey(): ByteArray = check(state == State.AUTHENTICATED) {
+        "DARKI Link session is not authenticated"
+    }.let { sessionKey!! }
 }
