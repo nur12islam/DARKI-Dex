@@ -2,6 +2,7 @@ package com.darki.link
 
 import android.app.Activity
 import android.os.Bundle
+import android.text.InputType
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -28,29 +29,28 @@ class MainActivity : Activity() {
             textSize = 30f
         })
         root.addView(TextView(this).apply {
-            text = "Peer connection • v${Protocol.VERSION}\nDevice: ${deviceId.take(8)}…"
+            text = "Private device ecosystem • Protocol v${Protocol.VERSION}\nDevice: ${deviceId.take(8)}…"
             textSize = 16f
             setPadding(0, 12, 0, 24)
         })
 
         address = EditText(this).apply {
             hint = "Peer IP address"
-            singleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(true)
             setText(pairing.host().orEmpty())
         }
         root.addView(address)
 
-        val listen = Button(this).apply {
+        root.addView(Button(this).apply {
             text = "Listen for peer"
             setOnClickListener { startListening() }
-        }
-        root.addView(listen)
+        })
 
-        val connect = Button(this).apply {
+        root.addView(Button(this).apply {
             text = "Connect to peer"
             setOnClickListener { connectToPeer(address.text.toString()) }
-        }
-        root.addView(connect)
+        })
 
         val ping = Button(this).apply {
             text = "Send ping"
@@ -71,13 +71,6 @@ class MainActivity : Activity() {
 
         appendStatus("Ready — choose Listen or enter the peer IP.")
         if (pairing.isPaired()) appendStatus("Saved peer: ${pairing.peerId()?.take(8)}…")
-
-        // Keep the first connection proof deliberately small. Authentication is
-        // the next security milestone and must precede privileged commands.
-        ping.setOnClickListener {
-            val sent = connection.send(Protocol.message("ping"))
-            appendStatus(if (sent) "Ping sent" else "No active connection")
-        }
     }
 
     private fun startListening() {
@@ -129,7 +122,12 @@ class MainActivity : Activity() {
                 "device_hello" -> {
                     val payload = message.optJSONObject("payload")
                     val peerId = payload?.optString("deviceId").orEmpty()
-                    if (peerId.isNotBlank()) pairing.save(peerId, address.text.toString(), PairingStore.DEFAULT_PORT)
+                    if (peerId.isNotBlank()) {
+                        // The connection proof is still unauthenticated. The secure
+                        // pairing layer will replace this temporary persistence path.
+                        val host = address.text.toString().trim()
+                        if (host.isNotBlank()) pairing.save(peerId, host, PairingStore.DEFAULT_PORT)
+                    }
                     appendStatus("Peer hello received: ${peerId.take(8)}…")
                     connection.send(Protocol.message("device_status", DeviceStatus.snapshot(this)))
                 }
