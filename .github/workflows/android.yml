@@ -1,4 +1,4 @@
-name: Android build
+name: DARKI Link Android build
 
 on:
   push:
@@ -38,24 +38,20 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APKs
-        run: gradle --no-daemon :host:assembleDebug :client:assembleDebug
+      - name: Build DARKI Link debug APK
+        run: gradle --no-daemon :app:assembleDebug
 
-      - name: Build unsigned release bundles
-        run: gradle --no-daemon :host:bundleRelease :client:bundleRelease
+      - name: Build DARKI Link release bundle
+        run: gradle --no-daemon :app:bundleRelease
 
-      - name: Upload debug APKs
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: darki-dex-debug-apks
-          path: |
-            host/build/outputs/apk/debug/*.apk
-            client/build/outputs/apk/debug/*.apk
+          name: darki-link-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
 
-      - name: Upload release bundles
+      - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: darki-dex-release-bundles
-          path: |
-            host/build/outputs/bundle/release/*.aab
-            client/build/outputs/bundle/release/*.aab
+          name: darki-link-release-bundle
+          path: app/build/outputs/bundle/release/*.aab
