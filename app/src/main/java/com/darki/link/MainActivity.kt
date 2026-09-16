@@ -7,6 +7,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.darki.link.network.LanDiscovery
 import org.json.JSONObject
 
 class MainActivity : Activity() {
@@ -14,6 +15,8 @@ class MainActivity : Activity() {
     private lateinit var address: EditText
     private val connection = PeerConnection()
     private val pairing by lazy { PairingStore(this) }
+    private val discovery by lazy { LanDiscovery(this) }
+    private var discoveredPort = PairingStore.DEFAULT_PORT
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,24 +46,32 @@ class MainActivity : Activity() {
         root.addView(address)
 
         root.addView(Button(this).apply {
+            text = "Make this device discoverable"
+            setOnClickListener { startAdvertising() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Discover nearby DARKI Link"
+            setOnClickListener { discoverPeers() }
+        })
+
+        root.addView(Button(this).apply {
             text = "Listen for peer"
             setOnClickListener { startListening() }
         })
 
         root.addView(Button(this).apply {
             text = "Connect to peer"
-            setOnClickListener { connectToPeer(address.text.toString()) }
+            setOnClickListener { connectToPeer(address.text.toString(), discoveredPort) }
         })
 
-        val ping = Button(this).apply {
+        root.addView(Button(this).apply {
             text = "Send ping"
-            isEnabled = false
             setOnClickListener {
                 val sent = connection.send(Protocol.message("ping"))
                 appendStatus(if (sent) "Ping sent" else "No active connection")
             }
-        }
-        root.addView(ping)
+        })
 
         status = TextView(this).apply {
             textSize = 15f
@@ -69,14 +80,39 @@ class MainActivity : Activity() {
         root.addView(status)
         setContentView(root)
 
-        appendStatus("Ready — choose Listen or enter the peer IP.")
+        appendStatus("Ready — connect both devices to the same network.")
         if (pairing.isPaired()) appendStatus("Saved peer: ${pairing.peerId()?.take(8)}…")
+    }
+
+    private fun startAdvertising() {
+        discovery.advertise(onEvent = ::appendStatus)
+        appendStatus("This device is discoverable on TCP ${PairingStore.DEFAULT_PORT}.")
+    }
+
+    private fun discoverPeers() {
+        appendStatus("Looking for peers on the current Wi-Fi/hotspot network…")
+        discovery.discover(
+            onPeer = { host, port, serviceName ->
+                runOnUiThread {
+                    if (serviceName.startsWith(LanDiscovery.SERVICE_NAME_PREFIX)) {
+                        address.setText(host)
+                        discoveredPort = port
+                        appendStatus("Found $serviceName at $host:$port")
+                        appendStatus("Review the address, then tap Connect to peer.")
+                    }
+                }
+            },
+            onEvent = ::appendStatus
+        )
     }
 
     private fun startListening() {
         appendStatus("Listening on TCP ${PairingStore.DEFAULT_PORT}…")
         connection.listen(
+            port = PairingStore.DEFAULT_PORT,
             onConnected = { host -> runOnUiThread {
+                address.setText(host)
+                discoveredPort = PairingStore.DEFAULT_PORT
                 appendStatus("Connected from $host")
                 sendHello()
             } },
@@ -86,16 +122,18 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun connectToPeer(host: String) {
-        if (host.isBlank()) {
-            appendStatus("Enter a peer IP first.")
+    private fun connectToPeer(host: String, port: Int = PairingStore.DEFAULT_PORT) {
+        val cleanHost = host.trim()
+        if (cleanHost.isBlank()) {
+            appendStatus("Discover a peer or enter its IP first.")
             return
         }
-        appendStatus("Connecting to $host:${PairingStore.DEFAULT_PORT}…")
+        appendStatus("Connecting to $cleanHost:$port…")
         connection.connect(
-            host = host,
+            host = cleanHost,
+            port = port,
             onConnected = { peerHost -> runOnUiThread {
-                appendStatus("Connected to $peerHost")
+                appendStatus("Connected to $peerHost:$port")
                 sendHello()
             } },
             onMessage = ::handleMessage,
@@ -123,10 +161,8 @@ class MainActivity : Activity() {
                     val payload = message.optJSONObject("payload")
                     val peerId = payload?.optString("deviceId").orEmpty()
                     if (peerId.isNotBlank()) {
-                        // The connection proof is still unauthenticated. The secure
-                        // pairing layer will replace this temporary persistence path.
                         val host = address.text.toString().trim()
-                        if (host.isNotBlank()) pairing.save(peerId, host, PairingStore.DEFAULT_PORT)
+                        if (host.isNotBlank()) pairing.save(peerId, host, discoveredPort)
                     }
                     appendStatus("Peer hello received: ${peerId.take(8)}…")
                     connection.send(Protocol.message("device_status", DeviceStatus.snapshot(this)))
@@ -148,6 +184,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        discovery.close()
         connection.close()
         super.onDestroy()
     }
